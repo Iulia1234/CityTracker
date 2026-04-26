@@ -1,0 +1,1 @@
+Inițial, AI-ul mi-a generat o variantă cu sscanf, dar am considerat-o prea complexă pentru a fi explicată la prezentare, așa că am ales să implementez parsarea folosind strtok pentru o claritate mai mare a codului
