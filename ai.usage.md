@@ -1,1 +1,5 @@
-Inițial, AI-ul mi-a generat o variantă cu sscanf, dar am considerat-o prea complexă pentru a fi explicată la prezentare, așa că am ales să implementez parsarea folosind strtok pentru o claritate mai mare a codului
+Am folosit Gemini pentru aceasta cerinta. I-am spus ca am o structura Report si sa ma ajute sa fac 2 functii: parse_condition si match_condition. La parse_condition i-am zis ca trebuie sa imi desparta un text de forma camp:operator:valoare in 3 bucati folosind semnul ":" ca separator, iar la match_condition i-am spus ca trebuie sa compare datele dintr-un raport cu valorile primite(de exemplu, daca sveritatea este mai mare decat 2).
+
+AI-ul mi-a propus initial o functie complicata cu sscanf si cod formatat automat pentru compararea tuturor campurilor.
+
+Am schimbat sscanf cu strtok pentru ca mi s-a parut mai simplu sa inteleg cum separ textul in bucati folosind ":". Am mai observat ca AI-ul uita uneori sa transforme textul in numar inainte sa compare severitatea, asa ca am adaugat eu conversia pentru ca semnele "<" sau ">" sa functioneze corect.
