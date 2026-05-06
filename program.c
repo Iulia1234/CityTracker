@@ -7,6 +7,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <errno.h>
+#include <sys/wait.h>
 #define MAX 200
 
 
@@ -20,6 +21,45 @@ typedef struct {
     time_t timestamp;
     char Description_text[MAX];
 }Report;
+
+int get_next_id(const char *district) {
+    char path[300];
+    snprintf(path, sizeof(path), "%s/reports.dat", district);
+    
+    int fd = open(path, O_RDONLY);
+    if (fd == -1) return 1; // Primul raport dacă fișierul nu există
+
+    Report last_r;
+    // Mergem la ultima înregistrare din fișier
+    off_t pos = lseek(fd, -sizeof(Report), SEEK_END);
+    
+    if (pos == -1) {
+        close(fd);
+        return 1; // Fișier gol
+    }
+
+    read(fd, &last_r, sizeof(Report));
+    close(fd);
+    return last_r.id + 1;
+}
+
+// Notifică programul monitor_reports prin SIGUSR1
+void notify_monitor() {
+    int fd = open(".monitor_pid", O_RDONLY);
+    if (fd == -1) return; // Monitorul nu rulează
+
+    char pid_str[10];
+    int n = read(fd, pid_str, sizeof(pid_str) - 1);
+    close(fd);
+
+    if (n > 0) {
+        pid_str[n] = '\0';
+        pid_t monitor_pid = atoi(pid_str);
+        kill(monitor_pid, SIGUSR1); // Trimite semnalul USR1
+    }
+}
+
+
 
 void create_symlink(const char *district) {
     char target[300], link_name[300];
@@ -104,26 +144,49 @@ int check_access(const char *path, const char *role, mode_t required_bit) {
 void add_report(const char *district, const char *user, const char *role) {
     char path[300];
     snprintf(path, sizeof(path), "%s/reports.dat", district);
-    int fd = open(path, O_WRONLY | O_APPEND);
+    
+    // Obținem ID-ul automat[cite: 1]
+    int next_id = get_next_id(district);
+
+    int fd = open(path, O_WRONLY | O_APPEND | O_CREAT, 0664);
     if (fd == -1) {
         perror("Eroare la deschiderea fisierului de rapoarte");
         return;
     }
 
     Report r;
-    printf("ID Raport: "); scanf("%d", &r.id);
+    r.id = next_id;
     strncpy(r.Inspector_name, user, MAX); 
     r.timestamp = time(NULL);
-    r.severity_level = 2;
-    strncpy(r.Issue_Category, "road", MAX);
-    strncpy(r.Description_text, "Groapa mare pe strada Principala", MAX);
+
+    // Citire date de la tastatură[cite: 1]
+    printf("\n--- Adaugare Raport Nou (ID: %d) ---\n", r.id);
+    
+    printf("Coordonata GPS X (Latitudine): ");
+    scanf("%f", &r.GPS_coordinates_x);
+    
+    printf("Coordonata GPS Y (Longitudine): ");
+    scanf("%f", &r.GPS_coordinates_y);
+
+    printf("Categorie (ex: road, lighting, flooding): ");
+    scanf("%s", r.Issue_Category);
+
+    printf("Nivel Severitate (1-3): ");
+    scanf("%d", &r.severity_level);
+
+    getchar(); // Consumă newline-ul rămas în buffer
+    printf("Descriere text: ");
+    fgets(r.Description_text, MAX, stdin);
+    r.Description_text[strcspn(r.Description_text, "\n")] = 0; // Elimină \n de la final
 
     write(fd, &r, sizeof(Report));
-    
     chmod(path, 0664);
-    
     close(fd);
-    printf("Raport adaugat cu succes de catre %s.\n", user);
+
+    printf("Raportul %d a fost salvat cu succes.\n", r.id);
+    
+    // Notificăm monitorul pentru Faza 2
+    notify_monitor();
 }
 
 void list_reports(char *district) {
@@ -226,6 +289,43 @@ void remove_report(const char *district, int report_id, const char *role) {
     close(fd);
 }
 
+void remove_district(char *district, const char *role){
+    char path[300];
+    if(strcmp(role, "manager")!=0){
+        fprintf(stderr, "Eroare: Doar managerul poate sterge districte\n");
+        return;
+    }
+    snprintf(path, sizeof(path), "active_reports-%s", district);
+    unlink(path);
+    pid_t pid=fork();
+    if(pid<0){
+        perror("Eroare la fork");
+        return;
+    }
+    if(pid==0){
+        if(strlen(district)==0 || strcmp(district, ".")==0 || strcmp(district, "/")==0){
+            fprintf(stderr, "Eroare: Nume district invalid pentru stergere\n");
+            exit(EXIT_FAILURE);
+        }
+        printf("[FIU] Se sterge directorul: %s\n", district);
+        char* argv[]={"rm", "-rf", district, NULL};
+        execvp("rm", argv);
+        perror("execvp");
+        exit(EXIT_FAILURE);
+    }
+    else{
+        int status;
+        waitpid(pid, &status, 0);
+        if(WIFEXITED(status) && WEXITSTATUS(status)==0){
+            printf("Districtul '%s' a fost eliminat cu succes de catre procesul %d\n", district, pid);
+        }
+        else{
+            printf("Procesul de stergere a esuat\n");
+        }
+    }
+
+}
+
 int parse_condition(const char *input, char *field, char *op, char *value) {
     char temp[100]; 
     strcpy(temp, input); 
@@ -274,6 +374,7 @@ int main(int argc, char *argv[]) {
         else if (strcmp(argv[i], "--view") == 0) { district = argv[++i]; report_id = atoi(argv[++i]); command = "view"; }
         else if (strcmp(argv[i], "--remove_report") == 0) { district = argv[++i]; report_id = atoi(argv[++i]); command = "remove"; }
         else if (strcmp(argv[i], "--update_threshold") == 0) { district = argv[++i]; threshold_val = atoi(argv[++i]); command = "threshold"; }
+        else if (strcmp(argv[i], "--remove_district")==0){district = argv[++i]; command = "remove_district";}
     }
 
     if (!role || !district || !command) {
@@ -301,6 +402,8 @@ int main(int argc, char *argv[]) {
         remove_report(district, report_id, role);
     } else if (strcmp(command, "threshold") == 0) {
         update_threshold(district, threshold_val, role);
+    } else if (strcmp(command, "remove_district")==0) {
+        remove_district(district, role);
     }
 
     return 0;
