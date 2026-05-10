@@ -44,18 +44,28 @@ int get_next_id(const char *district) {
 }
 
 // Notifică programul monitor_reports prin SIGUSR1
-void notify_monitor() {
+void notify_monitor_with_status(int report_id, char *status_msg) {
     int fd = open(".monitor_pid", O_RDONLY);
-    if (fd == -1) return; // Monitorul nu rulează
+    if (fd == -1) {
+        snprintf(status_msg, 200, "Raport %d adaugat. Monitorul nu a putut fi informat (fisier PID lipsa).", report_id);
+        return;
+    }
 
-    char pid_str[10];
+    char pid_str[16];
     int n = read(fd, pid_str, sizeof(pid_str) - 1);
     close(fd);
 
     if (n > 0) {
         pid_str[n] = '\0';
         pid_t monitor_pid = atoi(pid_str);
-        kill(monitor_pid, SIGUSR1); // Trimite semnalul USR1
+        
+        if (kill(monitor_pid, SIGUSR1) == 0) {
+            snprintf(status_msg, 200, "Raport %d adaugat. Monitorul (PID %d) a fost informat.", report_id, monitor_pid);
+        } else {
+            snprintf(status_msg, 200, "Raport %d adaugat. Monitorul NU a putut fi informat (eroare kill).", report_id);
+        }
+    } else {
+        snprintf(status_msg, 200, "Raport %d adaugat. Monitorul NU a putut fi informat (fisier PID gol).", report_id);
     }
 }
 
@@ -145,9 +155,7 @@ void add_report(const char *district, const char *user, const char *role) {
     char path[300];
     snprintf(path, sizeof(path), "%s/reports.dat", district);
     
-    // Obținem ID-ul automat[cite: 1]
     int next_id = get_next_id(district);
-
     int fd = open(path, O_WRONLY | O_APPEND | O_CREAT, 0664);
     if (fd == -1) {
         perror("Eroare la deschiderea fisierului de rapoarte");
@@ -159,34 +167,38 @@ void add_report(const char *district, const char *user, const char *role) {
     strncpy(r.Inspector_name, user, MAX); 
     r.timestamp = time(NULL);
 
-    // Citire date de la tastatură[cite: 1]
     printf("\n--- Adaugare Raport Nou (ID: %d) ---\n", r.id);
-    
-    printf("Coordonata GPS X (Latitudine): ");
-    scanf("%f", &r.GPS_coordinates_x);
-    
-    printf("Coordonata GPS Y (Longitudine): ");
-    scanf("%f", &r.GPS_coordinates_y);
+    printf("Coordonata GPS X: "); scanf("%f", &r.GPS_coordinates_x);
+    printf("Coordonata GPS Y: "); scanf("%f", &r.GPS_coordinates_y);
+    printf("Categorie: "); scanf("%s", r.Issue_Category);
+    printf("Nivel Severitate (1-3): "); scanf("%d", &r.severity_level);
 
-    printf("Categorie (ex: road, lighting, flooding): ");
-    scanf("%s", r.Issue_Category);
-
-    printf("Nivel Severitate (1-3): ");
-    scanf("%d", &r.severity_level);
-
-    getchar(); // Consumă newline-ul rămas în buffer
-    printf("Descriere text: ");
+    getchar();
+    printf("Descriere: ");
     fgets(r.Description_text, MAX, stdin);
-    r.Description_text[strcspn(r.Description_text, "\n")] = 0; // Elimină \n de la final
+    r.Description_text[strcspn(r.Description_text, "\n")] = 0;
 
     write(fd, &r, sizeof(Report));
     chmod(path, 0664);
     close(fd);
 
-    printf("Raportul %d a fost salvat cu succes.\n", r.id);
+    char notification_status[200];
+    notify_monitor_with_status(r.id, notification_status);
     
-    // Notificăm monitorul pentru Faza 2
-    notify_monitor();
+    printf("%s\n", notification_status);
+
+    char log_path[300];
+    snprintf(log_path, sizeof(log_path), "%s/logged_district", district);
+    int log_fd = open(log_path, O_WRONLY | O_APPEND);
+    if (log_fd != -1) {
+        time_t acum = time(NULL);
+        char *time_str = ctime(&acum);
+        time_str[strlen(time_str)-1] = '\0';
+
+        
+        dprintf(log_fd, "[%s] %s (%s): %s\n", time_str, user, role, notification_status);
+        close(log_fd);
+    }
 }
 
 void list_reports(char *district) {
