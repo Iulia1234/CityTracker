@@ -24,7 +24,7 @@ void handle_signals(int sig){
 
 
 int main(){
-
+    
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
     sa.sa_handler = handle_signals;
