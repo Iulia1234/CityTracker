@@ -7,23 +7,35 @@
 #include <fcntl.h>
 #define PID_FILE ".monitor_pid"
 
-void handle_signals(int sig){
-    if(sig==SIGINT){
-        const char *exit_msg="\n[MONITOR] Receptionat SIGINT. Se sterge fisierul PID si se inchide \n";
+void handle_signals(int sig) {
+    if (sig == SIGUSR1) {
+        // Folosim un format clar pe care City Hub sa il recunoasca
+        const char *msg = "[EVENT] New report added to system.\n";
+        write(STDOUT_FILENO, msg, strlen(msg));
+    } else if (sig == SIGINT) {
+        const char *exit_msg = "[STATUS] Monitor closing... TERMINATED\n";
         write(STDOUT_FILENO, exit_msg, strlen(exit_msg));
-        unlink(PID_FILE);
+        unlink(".monitor_pid");
         exit(0);
-    }
-    else if(sig==SIGUSR1){
-        const char *notify_msg="[MONITOR] Notificare: Un raport nou a fost adaugat\n";
-        write(STDOUT_FILENO, notify_msg, strlen(notify_msg));
     }
 }
 
 
 
-
 int main(){
+
+    int fd_check = open(".monitor_pid", O_RDONLY);
+    if (fd_check != -1) {
+        char existing_pid[10];
+        int n = read(fd_check, existing_pid, sizeof(existing_pid) - 1);
+        close(fd_check);
+        if (n > 0) {
+            existing_pid[n] = '\0';
+            // Acest mesaj va fi citit de city_hub prin pipe!
+            printf("ERROR: Monitor already running (PID: %s). TERMINATED\n", existing_pid);
+            exit(1); 
+        }
+    }
     
     struct sigaction sa;
     memset(&sa, 0, sizeof(sa));
